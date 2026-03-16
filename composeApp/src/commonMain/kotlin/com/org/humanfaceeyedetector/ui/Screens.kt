@@ -42,6 +42,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
+import com.org.humanfaceeyedetector.camera.CameraLens
 import com.org.humanfaceeyedetector.camera.CameraPreview
 import com.org.humanfaceeyedetector.camera.RequestCaptureImage
 import com.org.humanfaceeyedetector.navigation.AppNavigation
@@ -54,6 +55,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Lens
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 
 
@@ -224,6 +226,7 @@ fun CameraScreen(
 ) {
     var isProcessing by remember { mutableStateOf(false) }
     var shouldCapture by remember { mutableStateOf(false) }
+    var cameraLens by remember { mutableStateOf(CameraLens.Back) }
     
     PlatformBackHandler {
         onBack()
@@ -264,7 +267,8 @@ fun CameraScreen(
             // Live camera preview (bottom layer)
             CameraPreview(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxSize(),
+                cameraLens = cameraLens
             )
             
             // Overlay UI (top layer)
@@ -341,10 +345,13 @@ fun CameraScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(24.dp),
-            horizontalArrangement = Arrangement.Center,
+            horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Balance spacer to keep capture button centered
+            Spacer(modifier = Modifier.size(48.dp))
             
+            // Capture Button
             Box(
                 modifier = Modifier
                     .size(72.dp)
@@ -363,6 +370,22 @@ fun CameraScreen(
                     contentDescription = "Capture",
                     tint = Color.Black,
                     modifier = Modifier.size(28.dp)
+                )
+            }
+            
+            // Camera Switch Button
+            IconButton(
+                onClick = { 
+                    cameraLens = if (cameraLens == CameraLens.Back) CameraLens.Front else CameraLens.Back 
+                },
+                modifier = Modifier
+                    .size(48.dp)
+                    .background(Color.DarkGray.copy(alpha = 0.5f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = "Switch Camera",
+                    tint = Color.White
                 )
             }
         }

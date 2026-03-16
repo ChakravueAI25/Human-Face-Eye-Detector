@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.sp
  * Full implementation will be added in iOS Step-4
  */
 @Composable
-actual fun CameraPreview(modifier: Modifier) {
+actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -30,4 +30,3 @@ actual fun CameraPreview(modifier: Modifier) {
         )
     }
 }
-

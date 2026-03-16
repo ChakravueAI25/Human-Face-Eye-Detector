@@ -4,7 +4,7 @@ import android.graphics.RectF
 import android.util.Log
 
 private const val TAG = "DetectionParser"
-private const val CONFIDENCE_THRESHOLD = 0.45f
+private const val CONFIDENCE_THRESHOLD = 0.35f
 private const val EYE_CONFIDENCE_THRESHOLD = 0.35f
 
 /**
@@ -45,9 +45,15 @@ object DetectionParser {
     ): List<Detection> {
         val detections = mutableListOf<Detection>()
         
+        Log.d("MODEL_DEBUG", "Image size: $imageWidth x $imageHeight")
+        Log.d("MODEL_DEBUG", "Total detections from model: ${output[0].size}")
+
         try {
-            // Iterate through all 300 possible detections
-            for (i in 0 until 300) {
+            // Iterate through all predictions (dynamic size, usually 8400 or 300)
+            for (i in output[0].indices) {
+                // Correct Format: [x1, y1, x2, y2, confidence, class_id]
+                // Coordinates are normalized 0-1
+                
                 val x1 = output[0][i][0]
                 val y1 = output[0][i][1]
                 val x2 = output[0][i][2]
@@ -55,24 +61,33 @@ object DetectionParser {
                 val confidence = output[0][i][4]
                 val classId = output[0][i][5].toInt()
                 
+                // Filter by class (only accept class 0 = face/person)
+                if (classId != 0) continue
+
                 // Filter by confidence threshold
                 if (confidence > CONFIDENCE_THRESHOLD) {
-                    // Scale coordinates from model space (640x640) to image space
-                    val scaleX = imageWidth.toFloat() / 640f
-                    val scaleY = imageHeight.toFloat() / 640f
                     
-                    val scaledX1 = x1 * scaleX
-                    val scaledY1 = y1 * scaleY
-                    val scaledX2 = x2 * scaleX
-                    val scaledY2 = y2 * scaleY
+                    // Scale normalized coordinates (0-1) to image dimensions
+                    val left = x1 * imageWidth
+                    val top = y1 * imageHeight
+                    val right = x2 * imageWidth
+                    val bottom = y2 * imageHeight
+
+                    // Clamp to image bounds
+                    val clampedLeft = left.coerceAtLeast(0f)
+                    val clampedTop = top.coerceAtLeast(0f)
+                    val clampedRight = right.coerceAtMost(imageWidth.toFloat())
+                    val clampedBottom = bottom.coerceAtMost(imageHeight.toFloat())
                     
-                    // Create detection with scaled coordinates
-                    val box = RectF(
-                        scaledX1,
-                        scaledY1,
-                        scaledX2,
-                        scaledY2
+                    // Simple size check to avoid empty boxes
+                    if (clampedRight <= clampedLeft || clampedBottom <= clampedTop) continue
+
+                    Log.d(
+                        "MODEL_DEBUG",
+                        "BOX: l=$clampedLeft t=$clampedTop r=$clampedRight b=$clampedBottom conf=$confidence"
                     )
+                    
+                    val box = RectF(clampedLeft, clampedTop, clampedRight, clampedBottom)
                     
                     detections.add(
                         Detection(
@@ -88,12 +103,65 @@ object DetectionParser {
             detections.sortByDescending { it.confidence }
             
             Log.d(TAG, "Parsed ${detections.size} detections above threshold $CONFIDENCE_THRESHOLD")
-
+            Log.d("MODEL_DEBUG", "Total detections returned: ${detections.size}")
+            
+            // NMS is already applied by the model export, so we skip it here.
+            return detections
+            
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse detections", e)
         }
         
         return detections
+    }
+
+    /**
+     * Non-Maximum Suppression to remove overlapping bounding boxes
+     */
+    private fun nonMaxSuppression(
+        detections: List<Detection>,
+        iouThreshold: Float = 0.45f
+    ): List<Detection> {
+        val sorted = detections.sortedByDescending { it.confidence }.toMutableList()
+        val selected = mutableListOf<Detection>()
+
+        while (sorted.isNotEmpty()) {
+            val best = sorted.removeAt(0)
+            selected.add(best)
+
+            val iterator = sorted.iterator()
+
+            while (iterator.hasNext()) {
+                val other = iterator.next()
+
+                if (calculateIoU(best.box, other.box) > iouThreshold) {
+                    iterator.remove()
+                }
+            }
+        }
+
+        return selected
+    }
+
+    /**
+     * Calculate Intersection over Union (IoU) between two boxes
+     */
+    private fun calculateIoU(a: RectF, b: RectF): Float {
+        val intersectionLeft = kotlin.math.max(a.left, b.left)
+        val intersectionTop = kotlin.math.max(a.top, b.top)
+        val intersectionRight = kotlin.math.min(a.right, b.right)
+        val intersectionBottom = kotlin.math.min(a.bottom, b.bottom)
+
+        val intersectionArea =
+            kotlin.math.max(0f, intersectionRight - intersectionLeft) *
+            kotlin.math.max(0f, intersectionBottom - intersectionTop)
+
+        val areaA = (a.right - a.left) * (a.bottom - a.top)
+        val areaB = (b.right - b.left) * (b.bottom - b.top)
+
+        val union = areaA + areaB - intersectionArea
+
+        return if (union <= 0) 0f else intersectionArea / union
     }
     
     /**
@@ -110,44 +178,37 @@ object DetectionParser {
         faceWidth: Int,
         faceHeight: Int
     ): List<Detection> {
+        // TEMPORARY: Approximate eye regions using face geometry
+        // Until dedicated landmark model is integrated
         val detections = mutableListOf<Detection>()
         
         try {
-            // Iterate through detections
-            for (i in 0 until 300) {
-                val x1 = output[0][i][0]
-                val y1 = output[0][i][1]
-                val x2 = output[0][i][2]
-                val y2 = output[0][i][3]
-                val confidence = output[0][i][4]
-                
-                // Lower threshold for eyes (more lenient)
-                if (confidence > EYE_CONFIDENCE_THRESHOLD) {
-                    // Scale to face coordinates
-                    val scaleX = faceWidth.toFloat() / 640f
-                    val scaleY = faceHeight.toFloat() / 640f
-                    
-                    val scaledX1 = x1 * scaleX
-                    val scaledY1 = y1 * scaleY
-                    val scaledX2 = x2 * scaleX
-                    val scaledY2 = y2 * scaleY
-                    
-                    // Filter: eyes should be in upper 60% of face
-                    val centerY = (scaledY1 + scaledY2) / 2f
-                    if (centerY < faceHeight * 0.6) {
-                        val box = RectF(scaledX1, scaledY1, scaledX2, scaledY2)
-                        detections.add(Detection(box, confidence))
-                    }
-                }
-            }
+            // Left eye region: 15% from left, 25% from top
+            val leftEyeX = 0.15f * faceWidth
+            val leftEyeY = 0.25f * faceHeight
+            val eyeW = 0.30f * faceWidth
+            val eyeH = 0.20f * faceHeight
             
-            // Sort by confidence and take top 2
-            detections.sortByDescending { it.confidence }
-            val topTwo = detections.take(2).sortedBy { it.box.centerX() }
+            detections.add(
+                Detection(
+                    box = RectF(leftEyeX, leftEyeY, leftEyeX + eyeW, leftEyeY + eyeH),
+                    confidence = 0.90f
+                )
+            )
             
-            Log.d(TAG, "Eye detections: ${topTwo.size} eyes found")
+            // Right eye region: 55% from left, 25% from top
+            val rightEyeX = 0.55f * faceWidth
+            val rightEyeY = 0.25f * faceHeight
             
-            return topTwo
+            detections.add(
+                Detection(
+                    box = RectF(rightEyeX, rightEyeY, rightEyeX + eyeW, rightEyeY + eyeH),
+                    confidence = 0.90f
+                )
+            )
+            
+            Log.d(TAG, "Generated 2 heuristic eye regions")
+            return detections
             
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse eye detections", e)

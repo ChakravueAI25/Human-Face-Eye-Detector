@@ -2,7 +2,11 @@ package com.org.humanfaceeyedetector.camera
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageFormat
 import android.graphics.Matrix
+import android.graphics.Rect
+import android.graphics.YuvImage
 import android.util.Log
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -28,6 +32,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 private const val TAG = "CameraPreview"
@@ -40,7 +45,7 @@ private var currentImageCapture: ImageCapture? = null
  * Supports preview and image capture (Step-5)
  */
 @Composable
-actual fun CameraPreview(modifier: Modifier) {
+actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     
@@ -78,7 +83,8 @@ actual fun CameraPreview(modifier: Modifier) {
                 bindCameraToPreview(
                     lifecycleOwner = lifecycleOwner,
                     previewView = previewView,
-                    cameraProvider = cameraProvider.value
+                    cameraProvider = cameraProvider.value,
+                    cameraLens = cameraLens
                 )
             }
         )
@@ -115,7 +121,8 @@ private fun initializeCamera(
 private fun bindCameraToPreview(
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView,
-    cameraProvider: ProcessCameraProvider?
+    cameraProvider: ProcessCameraProvider?,
+    cameraLens: CameraLens
 ) {
     if (cameraProvider == null) {
         Log.w(TAG, "Camera provider is null, skipping binding")
@@ -139,9 +146,14 @@ private fun bindCameraToPreview(
         // Store globally for access from capture function
         currentImageCapture = imageCapture
         
-        // Select back camera
+        // Select back/front camera based on lens
+        val lensFacing = when(cameraLens) {
+            CameraLens.Back -> CameraSelector.LENS_FACING_BACK
+            CameraLens.Front -> CameraSelector.LENS_FACING_FRONT
+        }
+        
         val cameraSelector = CameraSelector.Builder()
-            .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+            .requireLensFacing(lensFacing)
             .build()
         
         // Bind to lifecycle with both preview and image capture (Step-5)
@@ -152,7 +164,7 @@ private fun bindCameraToPreview(
             imageCapture
         )
         
-        Log.d(TAG, "Camera and ImageCapture bound to preview successfully")
+        Log.d(TAG, "Camera and ImageCapture bound to preview successfully with lens: $cameraLens")
     } catch (e: Exception) {
         Log.e(TAG, "Failed to bind camera to preview", e)
     }
@@ -211,57 +223,50 @@ fun captureImage(
 }
 
 /**
- * Convert ImageProxy to Bitmap
+ * Convert ImageProxy to Bitmap using robust format handling
  */
-private fun imageToBitmap(imageProxy: ImageProxy): Bitmap {
-    val planes = imageProxy.planes
-    val ySize = imageProxy.width * imageProxy.height
-    val uvSize = imageProxy.width * imageProxy.height / 4
-    
-    val nv21 = ByteArray(ySize + uvSize * 2)
-    
-    // Y
-    planes[0].buffer.get(nv21, 0, ySize)
-    
-    val pixelStride = planes[1].pixelStride
-    if (pixelStride == 1) {
-        // Packed format
-        planes[1].buffer.get(nv21, ySize, uvSize)
-        planes[2].buffer.get(nv21, ySize + uvSize, uvSize)
+private fun imageToBitmap(image: ImageProxy): Bitmap {
+    val bitmap: Bitmap
+
+    if (image.format == ImageFormat.JPEG) {
+        val buffer = image.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } else if (image.format == ImageFormat.YUV_420_888) {
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(
+            nv21,
+            ImageFormat.NV21,
+            image.width,
+            image.height,
+            null
+        )
+
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 100, out)
+        val imageBytes = out.toByteArray()
+
+        bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
     } else {
-        // Semi-planar format - interleave U and V
-        val uvBuffer = ByteArray(uvSize * 2)
-        planes[1].buffer.get(uvBuffer, 0, uvSize)
-        planes[2].buffer.get(uvBuffer, uvSize, uvSize)
-        
-        for (i in 0 until uvSize) {
-            nv21[ySize + i * 2] = uvBuffer[i]
-            nv21[ySize + i * 2 + 1] = uvBuffer[uvSize + i]
-        }
+        image.close()
+        throw IllegalArgumentException("Unsupported image format: ${image.format}")
     }
-    
-    // Convert YUV to RGB
-    val bitmap = Bitmap.createBitmap(imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888)
-    val pixels = IntArray(ySize)
-    
-    for (i in 0 until ySize) {
-        val y = (nv21[i].toInt() and 0xFF) - 16
-        val u = (nv21[ySize + (i and -2)].toInt() and 0xFF) - 128
-        val v = (nv21[ySize + (i and -2) + 1].toInt() and 0xFF) - 128
-        
-        val y1192 = if (y < 0) 0 else y * 1192
-        var r = y1192 + v * 1634
-        var g = y1192 - u * 400 - v * 833
-        var b = y1192 + u * 2066
-        
-        r = if (r > 262143) 262143 else if (r < 0) 0 else r
-        g = if (g > 262143) 262143 else if (g < 0) 0 else g
-        b = if (b > 262143) 262143 else if (b < 0) 0 else b
-        
-        pixels[i] = -0x1000000 or (r shl 6 and 0xFF0000) or (g shr 2 and 0xFF00) or (b shr 10 and 0xFF)
-    }
-    
-    bitmap.setPixels(pixels, 0, imageProxy.width, 0, 0, imageProxy.width, imageProxy.height)
+
+    image.close()
     return bitmap
 }
 

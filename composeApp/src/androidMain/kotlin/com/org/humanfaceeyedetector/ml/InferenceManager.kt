@@ -1,5 +1,6 @@
 package com.org.humanfaceeyedetector.ml
 
+import android.content.Context
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -14,12 +15,26 @@ private const val TAG = "InferenceManager"
  * Step-6: InferenceManager coordinates ML inference
  * 
  * Responsibilities:
+ * - Initialize model
  * - Run detection on background thread
  * - Update app state with results
  * - Handle errors gracefully
  */
 object InferenceManager {
     
+    /**
+     * Initialize ModelRunner with context
+     * Must be called at app startup
+     */
+    fun initialize(context: Context) {
+        try {
+            ModelRunnerHolder.initialize(context)
+            Log.d(TAG, "InferenceManager initialized")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize InferenceManager", e)
+        }
+    }
+
     /**
      * Run face detection on captured image
      * Called when user captures an image

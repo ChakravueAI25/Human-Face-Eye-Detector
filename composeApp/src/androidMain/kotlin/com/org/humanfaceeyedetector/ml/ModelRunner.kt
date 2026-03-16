@@ -28,10 +28,16 @@ class ModelRunner(context: Context) {
     
     init {
         try {
+            Log.d("MODEL_DEBUG", "Loading model: models/model_fp32.tflite")
+            Log.d("MODEL_DEBUG", "Model file exists: ${context.assets.list("models")?.joinToString()}")
+
             // Load TFLite model from assets
             val modelBuffer = loadModelFile(context)
             interpreter = Interpreter(modelBuffer)
             Log.d(TAG, "Model loaded successfully: $MODEL_PATH")
+            Log.d("MODEL_DEBUG", "Interpreter created successfully")
+            Log.d("MODEL_DEBUG", "Input tensor shape: ${interpreter?.getInputTensor(0)?.shape()?.contentToString()}")
+            Log.d("MODEL_DEBUG", "Output tensor shape: ${interpreter?.getOutputTensor(0)?.shape()?.contentToString()}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load model", e)
         }
@@ -78,11 +84,33 @@ class ModelRunner(context: Context) {
                 ModelDebugger.debugPreprocessing(bitmap, inputBuffer)
             }
             
-            // Step 2: Prepare output buffer [1, 300, 6]
-            val output = Array(1) { Array(300) { FloatArray(6) } }
+            // Step 2: Prepare output buffer
+            // Check output tensor shape dynamically
+            val outputTensor = interpreter?.getOutputTensor(0)
+            val outputShape = outputTensor?.shape() ?: intArrayOf(1, 300, 6)
+            
+            // Log shape once
+            Log.d("MODEL_DEBUG", "Actual model output shape: ${outputShape.contentToString()}")
+
+            // Handle [1, N, 6] or [1, 6, N] format (YOLOv8 often outputs [1, 8400, 6])
+            val numDetections = outputShape[1] 
+            val numAttributes = outputShape[2] // typically 6: x, y, w, h, conf, class
+            
+            val output = Array(1) { Array(numDetections) { FloatArray(numAttributes) } }
             
             // Step 3: Run inference
             interpreter?.run(inputBuffer, output)
+            
+            // Log raw output for debugging parser
+            if (numDetections > 0) {
+                Log.d("MODEL_DEBUG", "First detection raw: ${output[0][0].contentToString()}")
+            }
+
+            for (i in 0 until 5) {
+                val conf = output[0][i][4]
+                Log.d("MODEL_DEBUG", "Detection $i confidence: $conf")
+            }
+
             if (enableDebug) {
                 ModelDebugger.debugInferenceOutput(output)
                 ModelDebugger.debugDetectionParsing(output, originalWidth, originalHeight)

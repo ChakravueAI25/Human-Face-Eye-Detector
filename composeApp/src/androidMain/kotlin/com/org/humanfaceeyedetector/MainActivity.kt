@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.view.WindowCompat
+import com.org.humanfaceeyedetector.ml.InferenceManager
 import com.org.humanfaceeyedetector.permissions.CameraPermissionHelper
 import com.org.humanfaceeyedetector.ui.App
 
@@ -14,7 +15,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        
+
+        // Step-6: Initialize ML model
+        InferenceManager.initialize(this)
+
         // Configure status bar and navigation bar appearance for dark theme
         // Light icons on dark background
         @Suppress("UNNECESSARY_NOT_NULL_ASSERTION")

@@ -35,6 +35,10 @@ object ImageProcessor {
             val byteBuffer = ByteBuffer.allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * 4)
             byteBuffer.order(ByteOrder.nativeOrder())
 
+            Log.d("MODEL_DEBUG", "Input bitmap size: ${bitmap.width} x ${bitmap.height}")
+            Log.d("MODEL_DEBUG", "Resized bitmap size: ${resized.width} x ${resized.height}")
+            Log.d("MODEL_DEBUG", "ByteBuffer capacity: ${byteBuffer.capacity()}")
+
             // Step 3: Extract RGB pixels and normalize
             val intValues = IntArray(INPUT_SIZE * INPUT_SIZE)
             resized.getPixels(intValues, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
@@ -53,6 +57,10 @@ object ImageProcessor {
                     byteBuffer.putFloat(r.toFloat() / 255f)
                     byteBuffer.putFloat(g.toFloat() / 255f)
                     byteBuffer.putFloat(b.toFloat() / 255f)
+
+                    if (i == 0 && j == 0) {
+                        Log.d("MODEL_DEBUG", "First pixel RGB normalized: R=${r/255f} G=${g/255f} B=${b/255f}")
+                    }
                 }
             }
             
