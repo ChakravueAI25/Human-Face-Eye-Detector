@@ -1,0 +1,9 @@
+
+Model Name: YOLOv8n
+Framework: PyTorch
+Converted: TensorFlow Lite
+Input Size: 640x640
+Quantization: FP32, FP16, INT8
+Model Size (FP32): 12.3 MB
+Model Size (FP16): 6.2 MB
+Model Size (INT8): 3.3 MB
