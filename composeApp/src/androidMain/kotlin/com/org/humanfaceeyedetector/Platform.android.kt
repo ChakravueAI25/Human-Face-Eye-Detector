@@ -7,3 +7,13 @@ class AndroidPlatform : Platform {
 }
 
 actual fun getPlatform(): Platform = AndroidPlatform()
+
+actual fun getCurrentTimeMillis(): Long = System.currentTimeMillis()
+
+actual fun formatTimestamp(timestamp: Long): String {
+    val formatter = java.text.SimpleDateFormat(
+        "yyyy-MM-dd HH:mm",
+        java.util.Locale.getDefault()
+    )
+    return formatter.format(java.util.Date(timestamp))
+}

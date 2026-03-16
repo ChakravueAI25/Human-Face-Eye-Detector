@@ -48,6 +48,7 @@ import com.org.humanfaceeyedetector.navigation.AppNavigation
 import com.org.humanfaceeyedetector.platform.PlatformBackHandler
 import com.org.humanfaceeyedetector.state.EyeType
 import com.org.humanfaceeyedetector.state.rememberAppState
+import com.org.humanfaceeyedetector.formatTimestamp
 import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -937,11 +938,7 @@ fun ResultScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     // Format timestamp with locale awareness
                     val captureTimeStr = if (captureTimestamp != null) {
-                        val formatter = java.text.SimpleDateFormat(
-                            "yyyy-MM-dd HH:mm",
-                            java.util.Locale.getDefault()
-                        )
-                        formatter.format(java.util.Date(captureTimestamp))
+                        formatTimestamp(captureTimestamp)
                     } else {
                         "-"
                     }

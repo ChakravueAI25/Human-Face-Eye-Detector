@@ -34,7 +34,7 @@ object ImageProcessor {
             // Shape: [1, 640, 640, 3] = 1 * 640 * 640 * 3 * 4 bytes (float32)
             val byteBuffer = ByteBuffer.allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * 4)
             byteBuffer.order(ByteOrder.nativeOrder())
-            
+
             // Step 3: Extract RGB pixels and normalize
             val intValues = IntArray(INPUT_SIZE * INPUT_SIZE)
             resized.getPixels(intValues, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)

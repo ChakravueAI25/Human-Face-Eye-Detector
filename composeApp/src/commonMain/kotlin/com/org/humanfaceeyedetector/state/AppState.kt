@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.ImageBitmap
+import com.org.humanfaceeyedetector.getCurrentTimeMillis
 
 sealed class Screen {
     data object Splash : Screen()
@@ -71,7 +72,7 @@ class AppStateHolder {
     fun setCapturedImage(image: ImageBitmap?) {
         _state.value = _state.value.copy(
             capturedImage = image,
-            captureTimestamp = if (image != null) System.currentTimeMillis() else null
+            captureTimestamp = if (image != null) getCurrentTimeMillis() else null
         )
     }
     

@@ -88,7 +88,7 @@ object DetectionParser {
             detections.sortByDescending { it.confidence }
             
             Log.d(TAG, "Parsed ${detections.size} detections above threshold $CONFIDENCE_THRESHOLD")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse detections", e)
         }
