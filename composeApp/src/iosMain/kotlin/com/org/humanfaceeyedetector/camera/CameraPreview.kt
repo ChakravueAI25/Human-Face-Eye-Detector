@@ -10,13 +10,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 
+import com.org.humanfaceeyedetector.state.DetectionResult
+
 /**
  * iOS stub for CameraPreview
  * Uses AVCaptureSession via SwiftUI integration
  * Full implementation will be added in iOS Step-4
  */
 @Composable
-actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
+actual fun CameraPreview(
+    modifier: Modifier,
+    cameraLens: CameraLens,
+    isDetectionEnabled: Boolean,
+    onDetectionsUpdated: (List<DetectionResult>) -> Unit,
+    onImageDimensionsUpdated: (Int, Int) -> Unit
+) {
     Box(
         modifier = modifier
             .fillMaxSize()

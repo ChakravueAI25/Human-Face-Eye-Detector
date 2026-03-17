@@ -1,90 +1,73 @@
 CHAKRAVUE EYE DETECTOR
-PROJECT DEVELOPMENT ROADMAP
+PROJECT DEVELOPMENT ROADMAP (REVISED ARCHITECTURE)
 
 Package:
-com.org.humanfeaceeyedetector
+com.org.humanfaceeyedetector
 
 Framework:
 Kotlin Multiplatform
 Compose Multiplatform
-TensorFlow Lite
 CameraX
+ML Kit Vision (Face Detection)
 
 ---
 
 PROJECT PURPOSE
 
-The application captures an image of a human face and detects eye regions using a YOLOv8 TensorFlow Lite model.
+The application captures an image of a human face and detects eye regions using on-device ML.
 
 Users will:
 
 1 Capture or upload an image
-2 Select a detected face
-3 Select left or right eye
-4 View detection result
+2 Detect multiple faces
+3 Select a face
+4 Select left or right eye
+5 View detection result
 
-The application runs ML inference locally on the device.
+The application runs entirely on-device with no server dependency.
 
 ---
 
 SYSTEM ARCHITECTURE
 
 commonMain
-Platform independent code.
+Platform independent code
 
 Contains:
-
 UI components
 navigation
 application state
 
 androidMain
-Android specific logic.
+Android-specific logic
 
 Contains:
-
 CameraX implementation
-TensorFlow Lite inference
+ML Kit Face Detection
+Eye landmark processing
 Image preprocessing
-Bounding box processing
+Bounding box rendering
 
 iosMain
-
-Contains minimal entry code for iOS builds.
-
-ML inference will not initially run on iOS.
+Minimal entry setup (ML not enabled initially)
 
 ---
 
-ML MODEL
+ML MODEL DESIGN
 
-Model:
-YOLOv8n converted to TensorFlow Lite
+IMPORTANT CHANGE:
 
-Input:
+YOLOv8 is NO LONGER used for face detection.
 
-640 x 640 RGB image
+Face detection is handled by:
 
-Normalized pixel values:
+ML Kit Face Detection API
 
-pixel / 255
+Capabilities:
 
-Tensor shape:
-
-[1, 640, 640, 3]
-
-Output tensor:
-
-[1, 300, 6]
-
-Each detection:
-
-x1
-y1
-x2
-y2
-confidence
-class_id
+Detect multiple faces
+Provide face bounding boxes
+Provide facial landmarks (eyes)
 
 ---
 
@@ -92,14 +75,11 @@ APPLICATION FLOW
 
 Splash Screen
 
-Loads ML model
-Initializes detection engine
+Initialize ML Kit Face Detector
 
 ↓
 
 Home Screen
-
-User options:
 
 Capture Image
 Upload Image
@@ -114,123 +94,136 @@ Capture image
 
 ↓
 
-Face Detection Screen
+Face Detection Stage (CRITICAL)
 
-Display detected faces
-User taps a face bounding box
+Run ML Kit Face Detection
+
+Output:
+List of face bounding boxes
 
 ↓
 
-Eye Detection Screen
+Face Selection Screen
 
-Zoom into selected face
-Display left and right eye regions
+Display all detected faces
+User selects one face
 
-User selects an eye
+↓
+
+Eye Detection Stage
+
+Crop selected face
+Extract:
+
+Left eye landmark
+Right eye landmark
+
+Convert landmarks → bounding boxes
+
+↓
+
+Eye Selection Screen
+
+Display both eyes
+User selects one
 
 ↓
 
 Result Screen
 
-Display selected eye bounding box
-Show:
+Display:
 
-Face ID
-Eye
-Confidence
-
-User can start a new scan.
+Selected face
+Selected eye
+Bounding box
+Confidence (if applicable)
 
 ---
 
-PROJECT DEVELOPMENT STEPS
+PROJECT DEVELOPMENT STEPS (UPDATED)
+
+STEP 0
+PREVIOUS STEPS 1-5 UI, NAVIGATION, CAMERA, AND USERFLOW are complete and functional.
 
 STEP 1
 Environment setup
-Dependencies
-Model placement
-File structure
+ML Kit dependency integration
 
 STEP 2
 Compose UI implementation
 
-Screens:
-
-Splash
-Home
-Camera
-Face Selection
-Eye Selection
-Result
-
-UI design is based on the Figma prototype in the Camera App Design folder.
-
 STEP 3
-Navigation system implementation
-
-Compose Navigation
-Screen state transitions
+Navigation system
 
 STEP 4
-Camera integration
-
-CameraX preview
-Image capture
-Bitmap conversion
+Camera integration (CameraX)
 
 STEP 5
-ML inference pipeline
+Face Detection (ML Kit)
 
-Image preprocessing
-Tensor conversion
-TFLite inference
-Detection parsing
+Detect faces
+Return bounding boxes
 
 STEP 6
-Bounding box overlay system
+Bounding box rendering
 
-Map model coordinates
-Render detection boxes
-Enable selection interaction
+Draw face boxes
+Enable selection
 
 STEP 7
 Face selection logic
 
-Filter detections
-Allow user selection
+User selects face
+Persist selection
 
 STEP 8
-Eye detection interaction
+Eye detection
 
-Crop face region
-Display selectable eye regions
+Extract landmarks
+Generate eye bounding boxes
 
 STEP 9
 Result rendering
 
-Overlay selected eye
-Display metadata
+Display selected eye
 
 STEP 10
 Performance optimization
 
-Switch to INT8 model if needed
-Thread optimization
-Reduce UI blocking
+Threading
+Bitmap reuse
+Reduce allocations
 
 ---
 
 ENGINEERING PRINCIPLES
 
-Keep directory structure minimal.
+DO NOT use object detection models for face detection
 
-Separate platform-specific code.
+Always separate:
 
-Never block UI thread with ML inference.
+Face detection
+Eye detection
 
-Maintain clear navigation flow.
+Never assume geometry (no heuristic eye positions)
 
-Ensure bounding boxes are correctly scaled from model space to image space.
+Use landmark-based detection for accuracy
+
+Maintain single pipeline flow
+
+Do not duplicate NMS or filtering if already handled
+
+Ensure correct coordinate scaling
+
+---
+
+FINAL ARCHITECTURE SUMMARY
+
+Camera → Face Detection → Face Selection → Eye Detection → Result
+
+NOT:
+
+Camera → YOLO → Guess → Pray
 
 ---
 

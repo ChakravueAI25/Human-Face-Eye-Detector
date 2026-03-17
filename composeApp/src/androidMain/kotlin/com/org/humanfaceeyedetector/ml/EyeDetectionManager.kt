@@ -2,106 +2,135 @@ package com.org.humanfaceeyedetector.ml
 
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asAndroidBitmap
 import com.org.humanfaceeyedetector.state.AppStateHolder
 import com.org.humanfaceeyedetector.state.DetectionResult
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
 private const val TAG = "EyeDetectionManager"
 
 /**
- * Step-7: EyeDetectionManager coordinates eye detection within face region
+ * Step-8: EyeDetectionManager extracts eye regions from existing landmarks
+ * 
+ * Replaces previous ML-based approach with geometric extraction.
+ * Constraints:
+ * - Do not run additional ML models
+ * - Use existing landmarks from selected face
  */
 object EyeDetectionManager {
     
     /**
-     * Detect eyes within selected face
-     * 
-     * @param fullImage Original captured image
-     * @param selectedFaceIndex Which face was selected
-     * @param appState App state containing face detections
+     * Extract eye boxes from selected face
+     * Using existing landmarks, no new inference.
      */
     suspend fun detectEyes(
-        fullImage: ImageBitmap,
-        selectedFaceIndex: Int,
+        fullImage: ImageBitmap, // Kept for signature compatibility, unused
+        selectedFaceId: Int,
         appState: AppStateHolder
     ) {
-        withContext(Dispatchers.Default) {
-            try {
-                appState.setProcessing(true)
-                
-                // Get the selected face detection
-                val selectedFace = appState.state.detections.getOrNull(selectedFaceIndex)
-                if (selectedFace == null) {
-                    Log.e(TAG, "Selected face not found")
-                    appState.setInferenceError("Face not found")
-                    return@withContext
-                }
-                
-                // Get ModelRunner instance
-                val modelRunner = ModelRunnerHolder.getInstance()
-                if (modelRunner == null) {
-                    Log.e(TAG, "ModelRunner not initialized")
-                    appState.setInferenceError("Model not loaded")
-                    return@withContext
-                }
-                
-                // Convert ImageBitmap to Bitmap
-                val bitmap = fullImage.asAndroidBitmap()
-                
-                // Step 1: Crop face region
-                val croppedFace = FaceCropper.cropFace(
-                    bitmap = bitmap,
-                    left = selectedFace.x1,
-                    top = selectedFace.y1,
-                    right = selectedFace.x2,
-                    bottom = selectedFace.y2
-                )
-                
-                // Step 2: Run inference on cropped face
-                Log.d(TAG, "Running eye detection on cropped face: ${croppedFace.width}x${croppedFace.height}")
-                modelRunner.detect(
-                    bitmap = croppedFace,
-                    originalWidth = croppedFace.width,
-                    originalHeight = croppedFace.height
-                )
-                
-                // Step 3: Filter for eye-like detections
-                val eyeDetectionsFiltered = DetectionParser.parseEyes(
-                    output = modelRunner.getLastOutput() ?: return@withContext,
-                    faceWidth = croppedFace.width,
-                    faceHeight = croppedFace.height
-                )
-                
-                if (eyeDetectionsFiltered.isEmpty()) {
-                    Log.w(TAG, "No eyes detected")
-                    appState.setEyeDetections(emptyList())
-                    appState.setProcessing(false)
-                    return@withContext
-                }
-                
-                // Step 4: Map coordinates back to full image
-                val eyeResultsInFullImage = eyeDetectionsFiltered.mapIndexed { index, detection ->
-                    DetectionResult(
-                        faceId = index,  // 0=left eye, 1=right eye
-                        confidence = detection.confidence,
-                        x1 = selectedFace.x1 + detection.box.left,
-                        y1 = selectedFace.y1 + detection.box.top,
-                        x2 = selectedFace.x1 + detection.box.right,
-                        y2 = selectedFace.y1 + detection.box.bottom
-                    )
-                }
-                
-                // Step 5: Store in state
-                appState.setEyeDetections(eyeResultsInFullImage)
-                Log.d(TAG, "Eye detection complete: ${eyeResultsInFullImage.size} eyes found")
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "Eye detection error", e)
-                appState.setInferenceError("Eye detection failed: ${e.message}")
+        try {
+            appState.setProcessing(true)
+            
+            // Find the selected face by ID
+            val selectedFace = appState.state.detections.find { it.faceId == selectedFaceId }
+            
+            if (selectedFace == null) {
+                Log.e(TAG, "Selected face not found (ID: $selectedFaceId)")
+                appState.setInferenceError("Face not found")
+                appState.setProcessing(false)
+                return
             }
+            
+            Log.d(TAG, "Extracting eyes for face $selectedFaceId")
+            
+            val faceWidth = abs(selectedFace.x2 - selectedFace.x1)
+            
+            // Box size: 15% of face width (as per requirements)
+            // Using as radius (half-width) for the rect construction
+            val eyeBoxRadius = faceWidth * 0.15f
+            
+            // Get landmarks or fallback
+            // Note: coordinates are already mapped to image space in DetectionResult
+            
+            val leftEyeCenter = getLandmarkOrFallback(
+                selectedFace.leftEyeX, selectedFace.leftEyeY,
+                selectedFace, isLeftEye = true
+            )
+            
+            val rightEyeCenter = getLandmarkOrFallback(
+                selectedFace.rightEyeX, selectedFace.rightEyeY,
+                selectedFace, isLeftEye = false
+            )
+            
+            // Create bounding boxes
+            val leftEyeBox = createEyeDetection(
+                center = leftEyeCenter,
+                radius = eyeBoxRadius,
+                id = 0 // Left Eye ID
+            )
+            
+            val rightEyeBox = createEyeDetection(
+                center = rightEyeCenter,
+                radius = eyeBoxRadius,
+                id = 1 // Right Eye ID
+            )
+            
+            val eyeDetections = listOf(leftEyeBox, rightEyeBox)
+            
+            // Update state
+            appState.setEyeDetections(eyeDetections)
+            appState.setProcessing(false)
+            Log.d(TAG, "Eye regions extracted: ${eyeDetections.size}")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error extracting eyes", e)
+            appState.setInferenceError("Eye extraction failed: ${e.message}")
+            appState.setProcessing(false)
         }
     }
+    
+    private fun getLandmarkOrFallback(
+        x: Float?, 
+        y: Float?, 
+        face: DetectionResult,
+        isLeftEye: Boolean
+    ): Pair<Float, Float> {
+        if (x != null && y != null) {
+            return Pair(x, y)
+        }
+        
+        Log.w(TAG, "Missing landmark for ${if(isLeftEye) "Left" else "Right"} eye. Using fallback.")
+        
+        val width = abs(face.x2 - face.x1)
+        val height = abs(face.y2 - face.y1)
+        
+        // Fallback estimation relative to face box
+        // ML Kit: LEFT_EYE is person's left (viewer's right)
+        // Viewer's Right (Person's Left Eye) -> xRatio ~ 0.7
+        // Viewer's Left (Person's Right Eye) -> xRatio ~ 0.3
+        
+        val xRatio = if (isLeftEye) 0.7f else 0.3f
+        val yRatio = 0.35f 
+        
+        val estimatedX = face.x1 + (width * xRatio)
+        val estimatedY = face.y1 + (height * yRatio)
+        
+        return Pair(estimatedX, estimatedY)
+    }
+    
+    private fun createEyeDetection(
+        center: Pair<Float, Float>,
+        radius: Float,
+        id: Int
+    ): DetectionResult {
+        val (cx, cy) = center
+        
+        return DetectionResult(
+            faceId = id,
+            confidence = 1.0f,
+            x1 = cx - radius,
+            y1 = cy - radius,
+            x2 = cx + radius,
+            y2 = cy + radius
+        )
+    }
 }
-

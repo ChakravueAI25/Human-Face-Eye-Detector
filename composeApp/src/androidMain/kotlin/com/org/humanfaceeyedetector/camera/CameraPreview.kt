@@ -9,6 +9,9 @@ import android.graphics.Rect
 import android.graphics.YuvImage
 import android.util.Log
 import androidx.camera.core.CameraSelector
+import androidx.annotation.OptIn
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -31,11 +34,17 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.google.common.util.concurrent.ListenableFuture
+import com.google.mlkit.vision.common.InputImage
+import com.org.humanfaceeyedetector.ml.FaceDetector
+import com.org.humanfaceeyedetector.state.DetectionResult
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 private const val TAG = "CameraPreview"
+
 
 // Global reference to imageCapture for use in capture function
 private var currentImageCapture: ImageCapture? = null
@@ -45,9 +54,18 @@ private var currentImageCapture: ImageCapture? = null
  * Supports preview and image capture (Step-5)
  */
 @Composable
-actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
+actual fun CameraPreview(
+    modifier: Modifier,
+    cameraLens: CameraLens,
+    isDetectionEnabled: Boolean,
+    onDetectionsUpdated: (List<DetectionResult>) -> Unit,
+    onImageDimensionsUpdated: (Int, Int) -> Unit
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    
+    // Step-10: Optimize - state for detection enabled
+    // We assume detection is enabled by default, but parent can control it logic via updates
     
     val cameraProvider = remember { mutableStateOf<ProcessCameraProvider?>(null) }
     val isInitialized = remember { mutableStateOf(false) }
@@ -75,7 +93,7 @@ actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    scaleType = PreviewView.ScaleType.FIT_CENTER
                 }
             },
             modifier = modifier.fillMaxSize(),
@@ -84,7 +102,10 @@ actual fun CameraPreview(modifier: Modifier, cameraLens: CameraLens) {
                     lifecycleOwner = lifecycleOwner,
                     previewView = previewView,
                     cameraProvider = cameraProvider.value,
-                    cameraLens = cameraLens
+                    cameraLens = cameraLens,
+                    isDetectionEnabled = isDetectionEnabled,
+                    onDetectionsUpdated = onDetectionsUpdated,
+                    onImageDimensionsUpdated = onImageDimensionsUpdated
                 )
             }
         )
@@ -116,13 +137,17 @@ private fun initializeCamera(
 }
 
 /**
- * Bind camera to PreviewView using CameraX with Preview + ImageCapture (Step-5)
+ * Bind camera to PreviewView using CameraX with Preview + ImageCapture + ImageAnalysis
  */
+@OptIn(ExperimentalGetImage::class)
 private fun bindCameraToPreview(
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView,
     cameraProvider: ProcessCameraProvider?,
-    cameraLens: CameraLens
+    cameraLens: CameraLens,
+    isDetectionEnabled: Boolean,
+    onDetectionsUpdated: (List<DetectionResult>) -> Unit,
+    onImageDimensionsUpdated: (Int, Int) -> Unit
 ) {
     if (cameraProvider == null) {
         Log.w(TAG, "Camera provider is null, skipping binding")
@@ -145,7 +170,91 @@ private fun bindCameraToPreview(
         
         // Store globally for access from capture function
         currentImageCapture = imageCapture
+
+        // Create image analysis use case
+        // Step-10: Backpressure strategy to drop frames if processing is slow
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
         
+        var lastProcessedTimestamp = 0L
+        val throttleIntervalMs = 200L // Process ~5 FPS max
+
+        imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(previewView.context)) { imageProxy ->
+            // Step-10: Skip if detection disabled
+            if (!isDetectionEnabled) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
+            
+            // Step-10: Throttling detection frequency
+            val currentTimestamp = System.currentTimeMillis()
+            if (currentTimestamp - lastProcessedTimestamp < throttleIntervalMs) {
+                imageProxy.close()
+                return@setAnalyzer
+            }
+            
+            val mediaImage = imageProxy.image
+            if (mediaImage != null) {
+                val rotation = imageProxy.imageInfo.rotationDegrees
+                val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
+                
+                // Update image dimensions
+                val width = if (rotation == 90 || rotation == 270) imageProxy.height else imageProxy.width
+                val height = if (rotation == 90 || rotation == 270) imageProxy.width else imageProxy.height
+                onImageDimensionsUpdated(width, height)
+                
+                // Step-10: Run ML and mapping on background thread (Default dispatcher)
+                lifecycleOwner.lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                    try {
+                        lastProcessedTimestamp = System.currentTimeMillis()
+                        val faces = FaceDetector.detect(inputImage)
+                        
+                        // Map to DetectionResult (allocations minimized where possible)
+                        val detectionResults = faces.mapIndexed { index, face ->
+                            DetectionResult(
+                                faceId = face.trackingId ?: index,
+                                confidence = 1.0f,
+                                x1 = face.boundingBox.left.toFloat(),
+                                y1 = face.boundingBox.top.toFloat(),
+                                x2 = face.boundingBox.right.toFloat(),
+                                y2 = face.boundingBox.bottom.toFloat(),
+                                leftEyeX = face.leftEye?.x,
+                                leftEyeY = face.leftEye?.y,
+                                rightEyeX = face.rightEye?.x,
+                                rightEyeY = face.rightEye?.y
+                            )
+                        }
+                        
+                        // Switch back to Main for UI update
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                             onDetectionsUpdated(detectionResults)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Analysis error", e)
+                    } finally {
+                        // Important: close proxy only after processing or copying is done
+                        // InputImage.fromMediaImage doesn't copy, it wraps.
+                        // However, ML Kit copies internally during process().
+                        // We must close imageProxy on the originating thread or after use?
+                        // CameraX is strict. imageProxy.close() frees the buffer.
+                        // We must trigger close HERE? No, we are in a coroutine.
+                        // The analyzer function returns immediately! 
+                        // If we return from analyzer, CameraX might think we are done?
+                        // If we hold the proxy, capture stalls.
+                        
+                        // Correction: InputImage from MediaImage holds reference.
+                        // We must close imageProxy ONLY when we are done reading from it.
+                        // Since 'detect' is suspend and async, we must close it inside the coroutine finally block.
+                        // Thread safety: ImageProxy is not thread safe, but we are just reading.
+                        imageProxy.close()
+                    }
+                }
+            } else {
+                imageProxy.close()
+            }
+        }
+
         // Select back/front camera based on lens
         val lensFacing = when(cameraLens) {
             CameraLens.Back -> CameraSelector.LENS_FACING_BACK
@@ -156,15 +265,16 @@ private fun bindCameraToPreview(
             .requireLensFacing(lensFacing)
             .build()
         
-        // Bind to lifecycle with both preview and image capture (Step-5)
+        // Bind to lifecycle with both preview, image capture, and image analysis
         cameraProvider.bindToLifecycle(
             lifecycleOwner,
             cameraSelector,
             preview,
-            imageCapture
+            imageCapture,
+            imageAnalysis
         )
         
-        Log.d(TAG, "Camera and ImageCapture bound to preview successfully with lens: $cameraLens")
+        Log.d(TAG, "Camera, ImageCapture, and ImageAnalysis bound to preview successfully with lens: $cameraLens")
     } catch (e: Exception) {
         Log.e(TAG, "Failed to bind camera to preview", e)
     }

@@ -1,5 +1,6 @@
 package com.org.humanfaceeyedetector.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,6 +59,10 @@ import androidx.compose.material.icons.filled.Lens
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 
+
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.filled.Close
 
 @Composable
 fun App() {
@@ -219,8 +224,10 @@ fun HomeScreen(
     }
 }
 
+
 @Composable
 fun CameraScreen(
+    appState: com.org.humanfaceeyedetector.state.AppStateHolder,
     onBack: () -> Unit,
     onCapture: (imageBitmap: androidx.compose.ui.graphics.ImageBitmap) -> Unit
 ) {
@@ -228,8 +235,18 @@ fun CameraScreen(
     var shouldCapture by remember { mutableStateOf(false) }
     var cameraLens by remember { mutableStateOf(CameraLens.Back) }
     
+    // reset detections when entering screen
+    LaunchedEffect(Unit) {
+        appState.setDetections(emptyList())
+        appState.selectFace(null)
+    }
+
     PlatformBackHandler {
-        onBack()
+        if (appState.state.selectedFace != null) {
+            appState.selectFace(null)
+        } else {
+            onBack()
+        }
     }
     
     // Handle image capture
@@ -253,8 +270,14 @@ fun CameraScreen(
             .background(Background)
     ) {
         TopBar(
-            title = "Camera Capture",
-            onBackClick = onBack
+            title = if (appState.state.selectedFace != null) "Face Selected" else "Camera Capture",
+            onBackClick = {
+                if (appState.state.selectedFace != null) {
+                    appState.selectFace(null)
+                } else {
+                    onBack()
+                }
+            }
         )
         
         Box(
@@ -266,73 +289,258 @@ fun CameraScreen(
         ) {
             // Live camera preview (bottom layer)
             CameraPreview(
-                modifier = Modifier
-                    .fillMaxSize(),
-                cameraLens = cameraLens
+                modifier = Modifier.fillMaxSize(),
+                cameraLens = cameraLens,
+                isDetectionEnabled = appState.state.selectedFace == null,
+                onDetectionsUpdated = { detections ->
+                     // Only update if no face is selected (freeze tracking)
+                     if (appState.state.selectedFace == null) {
+                         appState.setDetections(detections)
+                     }
+                },
+                onImageDimensionsUpdated = { width, height ->
+                    appState.setImageDimensions(width, height)
+                }
             )
             
             // Overlay UI (top layer)
+            if (appState.state.detections.isNotEmpty() && appState.state.imageWidth > 0 && appState.state.imageHeight > 0) {
+                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                     val density = LocalDensity.current
+                     val canvasWidth = with(density) { maxWidth.toPx() }
+                     val canvasHeight = with(density) { maxHeight.toPx() }
+                     
+                     // Values from analysis (image space)
+                     val imageWidth = appState.state.imageWidth.toFloat()
+                     val imageHeight = appState.state.imageHeight.toFloat()
+                     
+                     // Step 2: Compute scale (FIT CENTER logic)
+                     val scale = minOf(
+                         canvasWidth / imageWidth,
+                         canvasHeight / imageHeight
+                     )
+                     
+                     // Step 3: Compute offsets (centering the fitted image)
+                     val offsetX = (canvasWidth - imageWidth * scale) / 2f
+                     val offsetY = (canvasHeight - imageHeight * scale) / 2f
+
+                     Canvas(
+                         modifier = Modifier
+                             .fillMaxSize()
+                             .pointerInput(Unit) {
+                                 detectTapGestures { tapOffset ->
+                                     // If we already have a selection, tapping elsewhere might deselect or do nothing
+                                     // If NO selection, tap selects best face
+                                     if (appState.state.selectedFace == null) {
+                                         val tappedIndex = appState.state.detections.indexOfFirst { detection ->
+                                             val left = detection.x1 * scale + offsetX
+                                             val top = detection.y1 * scale + offsetY
+                                             val width = (detection.x2 - detection.x1) * scale
+                                             val height = (detection.y2 - detection.y1) * scale
+                                             
+                                             tapOffset.x >= left && tapOffset.x <= (left + width) &&
+                                             tapOffset.y >= top && tapOffset.y <= (top + height)
+                                         }
+                                         
+                                         if (tappedIndex != -1) {
+                                             appState.selectFace(tappedIndex)
+                                         }
+                                     } else {
+                                         // Face ALREADY selected, handle Eye Taps
+                                         val selectedFaceId = appState.state.selectedFace!!
+                                         val detection = appState.state.detections[selectedFaceId]
+                                         val faceWidth = detection.x2 - detection.x1
+                                         val eyeBoxSize = faceWidth * 0.15f
+                                         val eyeBoxSizeHalf = eyeBoxSize / 2f
+                                         
+                                         fun checkTap(cx: Float?, cy: Float?): Boolean {
+                                             if (cx == null || cy == null) return false
+                                             val ex1 = cx - eyeBoxSizeHalf
+                                             val ey1 = cy - eyeBoxSizeHalf
+                                             val ex2 = cx + eyeBoxSizeHalf
+                                             
+                                             val screenLeft = ex1 * scale + offsetX
+                                             val screenTop = ey1 * scale + offsetY
+                                             val screenWidth = (ex2 - ex1) * scale
+                                             // screenHeight = screenWidth (square)
+                                             
+                                             return tapOffset.x >= screenLeft && tapOffset.x <= (screenLeft + screenWidth) &&
+                                                    tapOffset.y >= screenTop && tapOffset.y <= (screenTop + screenWidth)
+                                         }
+
+                                         if (checkTap(detection.leftEyeX, detection.leftEyeY)) {
+                                             appState.selectEye(EyeType.Left)
+                                         } else if (checkTap(detection.rightEyeX, detection.rightEyeY)) {
+                                             appState.selectEye(EyeType.Right)
+                                         }
+                                     }
+                                 }
+                             }
+                     ) {
+                         appState.state.detections.forEachIndexed { index, detection ->
+                             // Skip drawing other faces if one is selected? OR dim them?
+                             // Prompt: "Highlight selected face"
+                             val isSelected = appState.state.selectedFace == index
+                             val isAnySelected = appState.state.selectedFace != null
+                             
+                             if (isAnySelected && !isSelected) {
+                                 // Skip others or draw dim
+                                 return@forEachIndexed 
+                             }
+
+                             // Step 4: Map each box from image space to screen space
+                             val left = detection.x1 * scale + offsetX
+                             val top = detection.y1 * scale + offsetY
+                             val width = (detection.x2 - detection.x1) * scale
+                             val height = (detection.y2 - detection.y1) * scale
+                             
+                             val color = if (isSelected) SuccessGreen else AccentOrange
+                             val strokeWidth = if (isSelected) 5.dp.toPx() else 3.dp.toPx()
+
+                             drawRect(
+                                 color = color,
+                                 topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                                 size = androidx.compose.ui.geometry.Size(width, height),
+                                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth)
+                             )
+                             
+                             if (isSelected) {
+                                 // Draw label
+                                 drawRect(
+                                     color = color,
+                                     topLeft = androidx.compose.ui.geometry.Offset(left, top - 40f),
+                                     size = androidx.compose.ui.geometry.Size(width, 40f)
+                                 )
+                                 
+                                 // Step 8: Eye Detection & Selection
+                                 val faceWidth = detection.x2 - detection.x1
+                                 val eyeBoxSize = faceWidth * 0.15f
+                                 val eyeBoxSizeHalf = eyeBoxSize / 2f
+                                 
+                                 // Helper to draw eye box
+                                 fun drawEyeBox(cx: Float?, cy: Float?, eyeType: EyeType) {
+                                     if (cx != null && cy != null) {
+                                         // Bounding box in image space
+                                         val ex1 = cx - eyeBoxSizeHalf
+                                         val ey1 = cy - eyeBoxSizeHalf
+                                         val ex2 = cx + eyeBoxSizeHalf
+                                         val ey2 = cy + eyeBoxSizeHalf // unused for drawing but logic wise
+                                         
+                                         // Map to screen space
+                                         val screenLeft = ex1 * scale + offsetX
+                                         val screenTop = ey1 * scale + offsetY
+                                         val screenWidth = (ex2 - ex1) * scale
+                                         val screenHeight = screenWidth // Square box
+                                         
+                                         val isEyeSelected = appState.state.selectedEye == eyeType
+                                         val eyeColor = if (isEyeSelected) SuccessGreen else AccentOrange
+                                         val eyeStroke = if (isEyeSelected) 4.dp.toPx() else 2.dp.toPx()
+                                         
+                                         drawRect(
+                                             color = eyeColor,
+                                             topLeft = androidx.compose.ui.geometry.Offset(screenLeft, screenTop),
+                                             size = androidx.compose.ui.geometry.Size(screenWidth, screenHeight),
+                                             style = if (isEyeSelected) androidx.compose.ui.graphics.drawscope.Fill else androidx.compose.ui.graphics.drawscope.Stroke(width = eyeStroke),
+                                             alpha = if (isEyeSelected) 0.5f else 1.0f
+                                         )
+                                         
+                                         if (!isEyeSelected) {
+                                              drawRect(
+                                                 color = eyeColor,
+                                                 topLeft = androidx.compose.ui.geometry.Offset(screenLeft, screenTop),
+                                                 size = androidx.compose.ui.geometry.Size(screenWidth, screenHeight),
+                                                 style = androidx.compose.ui.graphics.drawscope.Stroke(width = eyeStroke)
+                                             )
+                                         }
+                                     }
+                                 }
+                                 
+                                 drawEyeBox(detection.leftEyeX, detection.leftEyeY, EyeType.Left)
+                                 drawEyeBox(detection.rightEyeX, detection.rightEyeY, EyeType.Right)
+                             }
+                         }
+                     }
+                 }
+            }
+
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
                 modifier = Modifier.fillMaxSize()
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(280.dp)
-                        .border(3.dp, AccentOrange, shape = RoundedCornerShape(16.dp))
-                ) {
-                    // Corner brackets
-                    Box(
+                // If a face is selected, we might hide the guides
+                if (appState.state.selectedFace == null) {
+                   // ... existing overlay ...
+                   Box(
                         modifier = Modifier
-                            .size(16.dp)
-                            .background(AccentOrange, RoundedCornerShape(2.dp))
-                            .align(Alignment.TopStart)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(AccentOrange, RoundedCornerShape(2.dp))
-                            .align(Alignment.TopEnd)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(AccentOrange, RoundedCornerShape(2.dp))
-                            .align(Alignment.BottomStart)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(16.dp)
-                            .background(AccentOrange, RoundedCornerShape(2.dp))
-                            .align(Alignment.BottomEnd)
-                    )
+                            .size(280.dp)
+                            .border(3.dp, AccentOrange, shape = RoundedCornerShape(16.dp))
+                    ) { 
+                        // ... existing bracket code ...
+                        // Corner brackets
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .background(AccentOrange, RoundedCornerShape(2.dp))
+                                .align(Alignment.TopStart)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .background(AccentOrange, RoundedCornerShape(2.dp))
+                                .align(Alignment.TopEnd)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .background(AccentOrange, RoundedCornerShape(2.dp))
+                                .align(Alignment.BottomStart)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(16.dp)
+                                .background(AccentOrange, RoundedCornerShape(2.dp))
+                                .align(Alignment.BottomEnd)
+                        )
+                        
+                        // Center crosshair
+                        Box(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .background(AccentOrange, shape = CircleShape)
+                                .align(Alignment.Center)
+                        )
+                    }
                     
-                    // Center scanning line
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(2.dp)
-                            .background(AccentOrange)
-                            .align(Alignment.Center)
-                    )
+                    Spacer(modifier = Modifier.height(24.dp))
                     
-                    // Center crosshair
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .background(AccentOrange, shape = CircleShape)
-                            .align(Alignment.Center)
+                    Text(
+                        "Tap a face to select it",
+                        color = TextSecondary,
+                        fontSize = 12.sp
                     )
+                } else {
+                     // Instructions for selected state
+                     Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bottom = 100.dp),
+                        contentAlignment = Alignment.BottomCenter
+                     ) {
+                         Text(
+                             if (appState.state.selectedEye != null) 
+                                "Eye Selected: ${appState.state.selectedEye?.name}. Confirm?"
+                             else 
+                                "Face Selected. Tap Left or Right eye to select.",
+                             color = SuccessGreen,
+                             fontSize = 16.sp,
+                             fontWeight = FontWeight.Bold,
+                             modifier = Modifier
+                                 .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                                 .padding(8.dp)
+                         )
+                     }
                 }
-                
-                Spacer(modifier = Modifier.height(24.dp))
-                
-                Text(
-                    "Position face within the frame",
-                    color = TextSecondary,
-                    fontSize = 12.sp
-                )
             }
             
             // Processing indicator
@@ -348,44 +556,72 @@ fun CameraScreen(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Balance spacer to keep capture button centered
-            Spacer(modifier = Modifier.size(48.dp))
-            
-            // Capture Button
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .background(
-                        if (isProcessing) Color.Gray else AccentOrange,
-                        shape = CircleShape
+            if (appState.state.selectedFace == null) {
+                // Balance spacer to keep capture button centered
+                Spacer(modifier = Modifier.size(48.dp))
+                
+                // Capture Button -> Changed to Next Button if selected
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .background(
+                            if (isProcessing) Color.Gray else AccentOrange,
+                            shape = CircleShape
+                        )
+                        .clickable(enabled = false) { // Disable manual capture for now, using tap selection workflow
+                             // Workflow changed: Tap face -> Select -> Then confirm
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Lens,
+                        contentDescription = "Capture",
+                        tint = Color.Black,
+                        modifier = Modifier.size(28.dp)
                     )
-                    .clickable(enabled = !isProcessing) {
-                        isProcessing = true
-                        shouldCapture = true
+                }
+                
+                // Camera Switch Button
+                IconButton(
+                    onClick = { 
+                        cameraLens = if (cameraLens == CameraLens.Back) CameraLens.Front else CameraLens.Back 
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Lens,
-                    contentDescription = "Capture",
-                    tint = Color.Black,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-            
-            // Camera Switch Button
-            IconButton(
-                onClick = { 
-                    cameraLens = if (cameraLens == CameraLens.Back) CameraLens.Front else CameraLens.Back 
-                },
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(Color.DarkGray.copy(alpha = 0.5f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Switch Camera",
-                    tint = Color.White
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.DarkGray.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Refresh,
+                        contentDescription = "Switch Camera",
+                        tint = Color.White
+                    )
+                }
+            } else {
+                // Reset Button
+                 IconButton(
+                    onClick = { appState.selectFace(null) },
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color.Red.copy(alpha = 0.8f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Reset",
+                        tint = Color.White
+                    )
+                }
+                
+                // Confirm selection (Proceed to next step)
+                PrimaryButton(
+                    text = "Confirm Eye",
+                    onClick = { 
+                        // Logic for next step (Eye Detection/Result)
+                        // For now we just trigger capture to simulate "Done"
+                        // In real flow, we would probably just navigate to result with the cropped eye
+                        onCapture(androidx.compose.ui.graphics.ImageBitmap(1,1)) 
+                    },
+                    modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                    enabled = appState.state.selectedEye != null
                 )
             }
         }
@@ -634,6 +870,7 @@ fun BoundingBoxOverlay(
 
 @Composable
 fun EyeDetectionScreen(
+    capturedImage: androidx.compose.ui.graphics.ImageBitmap?,
     selectedFace: Int?,
     selectedEye: EyeType?,
     eyeDetections: List<com.org.humanfaceeyedetector.state.DetectionResult> = emptyList(),
@@ -642,10 +879,11 @@ fun EyeDetectionScreen(
     onEyeSelected: (EyeType) -> Unit
 ) {
     var localSelectedEye by remember { mutableStateOf(selectedEye) }
+    var imageSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     
     // Map eye detections to left/right: index 0 = left, index 1 = right
-    val leftEyeBox = eyeDetections.getOrNull(0)
-    val rightEyeBox = eyeDetections.getOrNull(1)
+    val leftEyeBox = eyeDetections.find { it.faceId == 0 }
+    val rightEyeBox = eyeDetections.find { it.faceId == 1 }
     
     PlatformBackHandler {
         onBack()
@@ -707,151 +945,53 @@ fun EyeDetectionScreen(
                 modifier = Modifier.padding(8.dp)
             )
             
-            // Display face with eye detections
-            if (eyeDetections.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .background(CardBackground, RoundedCornerShape(20.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!isProcessing) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(20.dp)
-                        ) {
-                            Text(
-                                "Face ${selectedFace?.plus(1) ?: "?"} – Eye Options",
-                                color = TextSecondary,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(top = 16.dp)
-                            )
-                            
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(24.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(20.dp)
-                            ) {
-                                // Left Eye
-                                Box(
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .border(
-                                            width = if (localSelectedEye == EyeType.Left) 3.dp else 2.dp,
-                                            color = if (localSelectedEye == EyeType.Left) SuccessGreen else AccentOrange,
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-                                        .clickable { localSelectedEye = EyeType.Left },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Text("Left Eye", color = TextPrimary, fontSize = 12.sp)
-                                        if (leftEyeBox != null) {
-                                            Text(
-                                                "${(leftEyeBox.confidence * 100).toInt()}%",
-                                                color = AccentOrange,
-                                                fontSize = 10.sp
-                                            )
-                                        }
-                                    }
-                                }
-                                
-                                // Right Eye
-                                Box(
-                                    modifier = Modifier
-                                        .size(100.dp)
-                                        .border(
-                                            width = if (localSelectedEye == EyeType.Right) 3.dp else 2.dp,
-                                            color = if (localSelectedEye == EyeType.Right) SuccessGreen else AccentOrange,
-                                            shape = RoundedCornerShape(12.dp)
-                                        )
-                                        .clickable { localSelectedEye = EyeType.Right },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.Center
-                                    ) {
-                                        Text("Right Eye", color = TextPrimary, fontSize = 12.sp)
-                                        if (rightEyeBox != null) {
-                                            Text(
-                                                "${(rightEyeBox.confidence * 100).toInt()}%",
-                                                color = AccentOrange,
-                                                fontSize = 10.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+            // Display captured image with eye bounding boxes (Step-8)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(300.dp)
+                    .background(CardBackground, RoundedCornerShape(20.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (capturedImage != null && !isProcessing) {
+                    BoundingBoxOverlay(
+                        image = capturedImage,
+                        detections = eyeDetections,
+                        selectedFaceIndex = localSelectedEye?.ordinal, // 0=Left, 1=Right
+                        onFaceTapped = { eyeIndex ->
+                            val eyeType = if (eyeIndex == 0) EyeType.Left else EyeType.Right
+                            localSelectedEye = eyeType
+                        },
+                        onImageSizeKnown = { width, height ->
+                            imageSize = width to height
                         }
-                    } else {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            CircularProgressIndicator(color = AccentOrange)
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Text("Detecting eyes…", color = TextSecondary)
-                        }
-                    }
-                }
-            } else if (!isProcessing) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .background(CardBackground, RoundedCornerShape(20.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Text("No eyes detected", color = TextSecondary)
-                        Text("Please select a different face", color = TextSecondary, fontSize = 12.sp)
-                    }
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .background(CardBackground, RoundedCornerShape(20.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
+                    )
+                } else if (isProcessing) {
+                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                         modifier = Modifier.fillMaxSize()
                     ) {
                         CircularProgressIndicator(color = AccentOrange)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Processing…", color = TextSecondary)
+                        Text("Detecting eyes…", color = TextSecondary)
                     }
+                } else {
+                    Text("No image available", color = TextSecondary)
                 }
             }
             
             Spacer(modifier = Modifier.weight(1f))
             
             PrimaryButton(
-                text = "Confirm Eye",
-                onClick = {
+                text = "Confirm Eye Selection",
+                onClick = { 
                     if (localSelectedEye != null) {
-                        onEyeSelected(localSelectedEye!!)
+                        onEyeSelected(localSelectedEye!!) 
                     }
                 },
-                enabled = localSelectedEye != null && !isProcessing && eyeDetections.isNotEmpty()
-            )
-            
-            SecondaryButton(
-                text = "Reselect Face",
-                onClick = onBack
+                modifier = Modifier.fillMaxWidth(),
+                enabled = localSelectedEye != null && !isProcessing
             )
         }
     }

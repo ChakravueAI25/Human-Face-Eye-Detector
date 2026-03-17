@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import com.google.mlkit.vision.common.InputImage
 import com.org.humanfaceeyedetector.state.AppStateHolder
 import com.org.humanfaceeyedetector.state.DetectionResult
 import kotlinx.coroutines.Dispatchers
@@ -50,41 +51,35 @@ object InferenceManager {
             try {
                 appState.setProcessing(true)
                 
-                // Get ModelRunner instance
-                val modelRunner = ModelRunnerHolder.getInstance()
-                if (modelRunner == null) {
-                    Log.e(TAG, "ModelRunner not initialized")
-                    appState.setInferenceError("Model not loaded")
-                    return@withContext
-                }
-                
                 // Convert ImageBitmap to Android Bitmap
                 val bitmap = imageBitmap.asAndroidBitmap()
                 
-                // Run detection
-                Log.d(TAG, "Running face detection on ${bitmap.width}x${bitmap.height} image")
-                val detections: List<Detection> = modelRunner.detect(
-                    bitmap = bitmap,
-                    originalWidth = bitmap.width,
-                    originalHeight = bitmap.height
-                )
-                
-                // Convert to DetectionResult for state storage
-                val detectionResults = detections.mapIndexed { index: Int, detection: Detection ->
+                // TEST FUNCTION (MANDATORY)
+                val inputImage = InputImage.fromBitmap(bitmap, 0)
+                val faces = FaceDetector.detect(inputImage)
+
+                Log.d("TEST", "Faces: ${faces.size}")
+
+                val detectionResults = faces.mapIndexed { index, face ->
                     DetectionResult(
-                        faceId = index,
-                        confidence = detection.confidence,
-                        x1 = detection.box.left,
-                        y1 = detection.box.top,
-                        x2 = detection.box.right,
-                        y2 = detection.box.bottom
+                        faceId = face.trackingId ?: index,
+                        confidence = 1.0f,
+                        x1 = face.boundingBox.left.toFloat(),
+                        y1 = face.boundingBox.top.toFloat(),
+                        x2 = face.boundingBox.right.toFloat(),
+                        y2 = face.boundingBox.bottom.toFloat(),
+                        leftEyeX = face.leftEye?.x,
+                        leftEyeY = face.leftEye?.y,
+                        rightEyeX = face.rightEye?.x,
+                        rightEyeY = face.rightEye?.y
                     )
                 }
                 
                 // Update state with results
                 appState.setDetections(detectionResults)
-                Log.d(TAG, "Inference complete: ${detectionResults.size} faces detected")
+                appState.setProcessing(false)
                 
+
             } catch (e: Exception) {
                 Log.e(TAG, "Inference error", e)
                 appState.setInferenceError("Detection failed: ${e.message}")

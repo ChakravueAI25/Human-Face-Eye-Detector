@@ -30,7 +30,11 @@ data class DetectionResult(
     val x1: Float,
     val y1: Float,
     val x2: Float,
-    val y2: Float
+    val y2: Float,
+    val leftEyeX: Float? = null,
+    val leftEyeY: Float? = null,
+    val rightEyeX: Float? = null,
+    val rightEyeY: Float? = null
 )
 
 /**
@@ -48,7 +52,10 @@ data class AppStateData(
     val detections: List<DetectionResult> = emptyList(),
     val eyeDetections: List<DetectionResult> = emptyList(),
     val isProcessing: Boolean = false,
-    val inferenceError: String? = null
+    val inferenceError: String? = null,
+    // Step-3: Image dimensions for coordinate mapping
+    val imageWidth: Int = 0,
+    val imageHeight: Int = 0
 )
 
 class AppStateHolder {
@@ -56,12 +63,18 @@ class AppStateHolder {
     
     val state: AppStateData
         get() = _state.value
+
+    fun setImageDimensions(width: Int, height: Int) {
+        if (_state.value.imageWidth != width || _state.value.imageHeight != height) {
+            _state.value = _state.value.copy(imageWidth = width, imageHeight = height)
+        }
+    }
     
     fun navigateTo(screen: Screen) {
         _state.value = _state.value.copy(currentScreen = screen)
     }
     
-    fun selectFace(faceId: Int) {
+    fun selectFace(faceId: Int?) {
         _state.value = _state.value.copy(selectedFace = faceId)
     }
     

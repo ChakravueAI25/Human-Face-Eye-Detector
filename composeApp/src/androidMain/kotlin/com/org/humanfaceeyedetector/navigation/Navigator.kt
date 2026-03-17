@@ -52,6 +52,7 @@ actual fun AppNavigation(appState: AppStateHolder) {
         )
         
         Screen.Camera -> CameraScreen(
+            appState = appState,
             onBack = { appState.navigateTo(Screen.Home) },
             onCapture = { imageBitmap ->
                 // Store captured image in state
@@ -98,6 +99,7 @@ actual fun AppNavigation(appState: AppStateHolder) {
             }
             
             EyeDetectionScreen(
+                capturedImage = appState.state.capturedImage,
                 selectedFace = appState.state.selectedFace,
                 selectedEye = appState.state.selectedEye,
                 eyeDetections = appState.state.eyeDetections,
