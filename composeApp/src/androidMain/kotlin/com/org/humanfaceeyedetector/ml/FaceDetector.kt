@@ -23,7 +23,7 @@ object FaceDetector {
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-            .setMinFaceSize(0.1f)
+            .setMinFaceSize(0.05f)
             .enableTracking()
             .build()
 
@@ -48,4 +48,3 @@ object FaceDetector {
         }
     }
 }
-
