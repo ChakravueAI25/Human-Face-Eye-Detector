@@ -14,3 +14,19 @@ expect fun RequestCaptureImage(
     onError: (String) -> Unit = {}
 )
 
+/**
+ * Imperatively trigger image capture
+ * Android: Uses CameraX ImageCapture.takePicture
+ * iOS: Will use AVCapturePhotoOutput
+ */
+expect fun captureImage(
+    onImageCaptured: (Any) -> Unit,
+    onError: (String) -> Unit = {}
+)
+
+/**
+ * Extension to convert platform Bitmap to Compose ImageBitmap
+ * Android: Bitmap.asImageBitmap()
+ */
+expect fun Any.toImageBitmap(): ImageBitmap
+

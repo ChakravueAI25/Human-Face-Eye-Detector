@@ -47,7 +47,7 @@ private const val TAG = "CameraPreview"
 
 
 // Global reference to imageCapture for use in capture function
-private var currentImageCapture: ImageCapture? = null
+var currentImageCapture: ImageCapture? = null
 
 /**
  * CameraPreview composable that displays live camera feed using CameraX
@@ -64,11 +64,9 @@ actual fun CameraPreview(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     
-    // Step-10: Optimize - state for detection enabled
-    // We assume detection is enabled by default, but parent can control it logic via updates
-    
     val cameraProvider = remember { mutableStateOf<ProcessCameraProvider?>(null) }
     val isInitialized = remember { mutableStateOf(false) }
+    val boundLens = remember { mutableStateOf<CameraLens?>(null) }
     
     // Initialize camera provider and setup
     LaunchedEffect(Unit) {
@@ -98,15 +96,19 @@ actual fun CameraPreview(
             },
             modifier = modifier.fillMaxSize(),
             update = { previewView ->
-                bindCameraToPreview(
-                    lifecycleOwner = lifecycleOwner,
-                    previewView = previewView,
-                    cameraProvider = cameraProvider.value,
-                    cameraLens = cameraLens,
-                    isDetectionEnabled = isDetectionEnabled,
-                    onDetectionsUpdated = onDetectionsUpdated,
-                    onImageDimensionsUpdated = onImageDimensionsUpdated
-                )
+                // Only rebind if lens changed - prevents camera close on recomposition
+                if (boundLens.value != cameraLens) {
+                    boundLens.value = cameraLens
+                    bindCameraToPreview(
+                        lifecycleOwner = lifecycleOwner,
+                        previewView = previewView,
+                        cameraProvider = cameraProvider.value,
+                        cameraLens = cameraLens,
+                        isDetectionEnabled = isDetectionEnabled,
+                        onDetectionsUpdated = onDetectionsUpdated,
+                        onImageDimensionsUpdated = onImageDimensionsUpdated
+                    )
+                }
             }
         )
     }
@@ -335,7 +337,7 @@ fun captureImage(
 /**
  * Convert ImageProxy to Bitmap using robust format handling
  */
-private fun imageToBitmap(image: ImageProxy): Bitmap {
+fun imageToBitmap(image: ImageProxy): Bitmap {
     val bitmap: Bitmap
 
     if (image.format == ImageFormat.JPEG) {
@@ -384,7 +386,7 @@ private fun imageToBitmap(image: ImageProxy): Bitmap {
  * Rotate bitmap by specified degrees (Step-5 fix)
  * Ensures detection boxes align with actual image orientation
  */
-private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
+fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
     if (degrees == 0) return bitmap
     
     val matrix = Matrix().apply {
@@ -401,3 +403,51 @@ private fun rotateBitmap(bitmap: Bitmap, degrees: Int): Bitmap {
         true
     )
 }
+
+/**
+ * Imperatively trigger image capture
+ * Called from CameraScreen when user clicks capture button
+ */
+fun captureImageImpl(
+    onImageCaptured: (Bitmap) -> Unit,
+    onError: (String) -> Unit
+) {
+    val imageCapture = currentImageCapture
+    if (imageCapture == null) {
+        android.util.Log.e(TAG, "ImageCapture not initialized")
+        onError("Camera not ready")
+        return
+    }
+    
+    val executor = Executors.newSingleThreadExecutor()
+    
+    imageCapture.takePicture(
+        executor,
+        object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                try {
+                    val rotation = image.imageInfo.rotationDegrees
+                    val bitmap = imageToBitmap(image)
+                    
+                    val rotatedBitmap = if (rotation != 0) {
+                        rotateBitmap(bitmap, rotation)
+                    } else {
+                        bitmap
+                    }
+                    
+                    onImageCaptured(rotatedBitmap)
+                    android.util.Log.d(TAG, "Image captured and rotated by ${rotation}°")
+                } catch (e: Exception) {
+                    android.util.Log.e(TAG, "Failed to convert image to bitmap", e)
+                    onError("Failed to process image: ${e.message}")
+                }
+            }
+            
+            override fun onError(exception: ImageCaptureException) {
+                android.util.Log.e(TAG, "Image capture error", exception)
+                onError("Capture failed: ${exception.message}")
+            }
+        }
+    )
+}
+

@@ -60,18 +60,29 @@ object InferenceManager {
 
                 Log.d("TEST", "Faces: ${faces.size}")
 
+                val bitmapW = bitmap.width.toFloat()
+                val bitmapH = bitmap.height.toFloat()
+
                 val detectionResults = faces.mapIndexed { index, face ->
+                    val rawLeftX  = face.leftEye?.x
+                    val rawLeftY  = face.leftEye?.y
+                    val rawRightX = face.rightEye?.x
+                    val rawRightY = face.rightEye?.y
+
+                    fun Float?.clampW() = this?.coerceIn(0f, bitmapW)
+                    fun Float?.clampH() = this?.coerceIn(0f, bitmapH)
+
                     DetectionResult(
-                        faceId = face.trackingId ?: index,
+                        faceId     = face.trackingId ?: index,
                         confidence = 1.0f,
-                        x1 = face.boundingBox.left.toFloat(),
-                        y1 = face.boundingBox.top.toFloat(),
-                        x2 = face.boundingBox.right.toFloat(),
-                        y2 = face.boundingBox.bottom.toFloat(),
-                        leftEyeX = face.leftEye?.x,
-                        leftEyeY = face.leftEye?.y,
-                        rightEyeX = face.rightEye?.x,
-                        rightEyeY = face.rightEye?.y
+                        x1 = face.boundingBox.left.toFloat().coerceIn(0f, bitmapW),
+                        y1 = face.boundingBox.top.toFloat().coerceIn(0f, bitmapH),
+                        x2 = face.boundingBox.right.toFloat().coerceIn(0f, bitmapW),
+                        y2 = face.boundingBox.bottom.toFloat().coerceIn(0f, bitmapH),
+                        leftEyeX  = rawLeftX.clampW(),
+                        leftEyeY  = rawLeftY.clampH(),
+                        rightEyeX = rawRightX.clampW(),
+                        rightEyeY = rawRightY.clampH()
                     )
                 }
                 

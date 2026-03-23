@@ -113,16 +113,12 @@ actual fun AppNavigation(appState: AppStateHolder) {
             
             val faceImage = if (capturedImage != null && faceDetection != null) {
                 try {
-                    // Convert to Android Bitmap for cropping
                     val androidBitmap = capturedImage.asAndroidBitmap()
-                    
-                    cropFace(
-                        androidBitmap,
-                        faceDetection.x1,
-                        faceDetection.y1,
-                        faceDetection.x2,
-                        faceDetection.y2
-                    ).asImageBitmap()
+                    val clampedX1 = maxOf(0f, faceDetection.x1)
+                    val clampedY1 = maxOf(0f, faceDetection.y1)
+                    val clampedX2 = minOf(androidBitmap.width.toFloat(),  faceDetection.x2)
+                    val clampedY2 = minOf(androidBitmap.height.toFloat(), faceDetection.y2)
+                    cropFace(androidBitmap, clampedX1, clampedY1, clampedX2, clampedY2).asImageBitmap()
                 } catch (e: Exception) {
                     Log.e("Navigator", "Face crop failed", e)
                     null
@@ -159,17 +155,13 @@ actual fun AppNavigation(appState: AppStateHolder) {
             } else null
             
             val eyeImage = if (capturedImage != null && eyeDetection != null) {
-                 try {
-                    // Convert to Android Bitmap for cropping
+                try {
                     val androidBitmap = capturedImage.asAndroidBitmap()
-                    
-                    cropFace(
-                        androidBitmap,
-                        eyeDetection.x1,
-                        eyeDetection.y1,
-                        eyeDetection.x2,
-                        eyeDetection.y2
-                    ).asImageBitmap()
+                    val clampedX1 = maxOf(0f, eyeDetection.x1)
+                    val clampedY1 = maxOf(0f, eyeDetection.y1)
+                    val clampedX2 = minOf(androidBitmap.width.toFloat(),  eyeDetection.x2)
+                    val clampedY2 = minOf(androidBitmap.height.toFloat(), eyeDetection.y2)
+                    cropFace(androidBitmap, clampedX1, clampedY1, clampedX2, clampedY2).asImageBitmap()
                 } catch (e: Exception) {
                     Log.e("Navigator", "Eye crop failed", e)
                     null

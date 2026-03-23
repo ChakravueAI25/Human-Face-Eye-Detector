@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import com.org.humanfaceeyedetector.camera.CameraLens
 import com.org.humanfaceeyedetector.camera.CameraPreview
-import com.org.humanfaceeyedetector.camera.RequestCaptureImage
+import com.org.humanfaceeyedetector.camera.toImageBitmap
 import com.org.humanfaceeyedetector.navigation.AppNavigation
 import com.org.humanfaceeyedetector.platform.PlatformBackHandler
 import com.org.humanfaceeyedetector.state.EyeType
@@ -223,141 +223,100 @@ fun CameraScreen(
     onBack: () -> Unit,
     onCapture: (imageBitmap: androidx.compose.ui.graphics.ImageBitmap) -> Unit
 ) {
-    var shouldCapture by remember { mutableStateOf(false) }
+    var detectionFrozen by remember { mutableStateOf(false) }
     var cameraLens by remember { mutableStateOf(CameraLens.Back) }
-    
-    // Reset state when entering camera screen
+
     LaunchedEffect(Unit) {
         appState.setDetections(emptyList())
         appState.selectFace(null)
-        // Don't reset eye selection here
     }
 
-    PlatformBackHandler {
-        onBack()
-    }
-    
-    // Handle image capture request
-    if (shouldCapture) {
-        RequestCaptureImage(
-            onImageCaptured = { imageBitmap ->
-                onCapture(imageBitmap)
-                shouldCapture = false
-            },
-            onError = { error ->
-                appState.setInferenceError("Capture failed: $error")
-                shouldCapture = false
-            }
-        )
-    }
-    
+    PlatformBackHandler { onBack() }
+
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Background)
+        modifier = Modifier.fillMaxSize().background(Background)
     ) {
-        TopBar(
-            title = "Camera Capture",
-            onBackClick = onBack
-        )
-        
+        TopBar(title = "Camera Capture", onBackClick = onBack)
+
         Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(Color.Black),
+            modifier = Modifier.weight(1f).fillMaxWidth().background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
-            // Live camera preview (bottom layer)
             CameraPreview(
                 modifier = Modifier.fillMaxSize(),
                 cameraLens = cameraLens,
-                isDetectionEnabled = appState.state.selectedFace == null,
+                isDetectionEnabled = !detectionFrozen,
                 onDetectionsUpdated = { detections ->
-                     // Only update if no face is selected (freeze tracking)
-                     if (appState.state.selectedFace == null) {
-                         appState.setDetections(detections)
-                     }
+                    if (!detectionFrozen) appState.setDetections(detections)
                 },
                 onImageDimensionsUpdated = { width, height ->
                     appState.setImageDimensions(width, height)
                 }
             )
-            
-            // Live detection overlay
-            if (appState.state.detections.isNotEmpty() && appState.state.imageWidth > 0 && appState.state.imageHeight > 0) {
-                 androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
-                     val imageWidth = appState.state.imageWidth.toFloat()
-                     val imageHeight = appState.state.imageHeight.toFloat()
-                     
-                     // Calculate scale to fit (CameraPreview usually fits center)
-                     val scale = minOf(size.width / imageWidth, size.height / imageHeight)
-                     
-                     val offsetX = (size.width - imageWidth * scale) / 2
-                     val offsetY = (size.height - imageHeight * scale) / 2
-                     
-                     appState.state.detections.forEach { detection ->
-                         val left = detection.x1 * scale + offsetX
-                         val top = detection.y1 * scale + offsetY
-                         val width = (detection.x2 - detection.x1) * scale
-                         val height = (detection.y2 - detection.y1) * scale
-                         
-                         drawRect(
-                             color = AccentOrange,
-                             topLeft = androidx.compose.ui.geometry.Offset(left, top),
-                             size = androidx.compose.ui.geometry.Size(width, height),
-                             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
-                         )
-                     }
-                 }
+
+            if (appState.state.detections.isNotEmpty()
+                && appState.state.imageWidth > 0
+                && appState.state.imageHeight > 0
+                && !detectionFrozen
+            ) {
+                androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                    val imageWidth = appState.state.imageWidth.toFloat()
+                    val imageHeight = appState.state.imageHeight.toFloat()
+                    val scale = minOf(size.width / imageWidth, size.height / imageHeight)
+                    val offsetX = (size.width - imageWidth * scale) / 2
+                    val offsetY = (size.height - imageHeight * scale) / 2
+                    appState.state.detections.forEach { detection ->
+                        val left = detection.x1 * scale + offsetX
+                        val top = detection.y1 * scale + offsetY
+                        val width = (detection.x2 - detection.x1) * scale
+                        val height = (detection.y2 - detection.y1) * scale
+                        drawRect(
+                            color = AccentOrange,
+                            topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                            size = androidx.compose.ui.geometry.Size(width, height),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+                        )
+                    }
+                }
             }
         }
-        
+
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Camera switch button
             IconButton(
-                onClick = { 
-                    cameraLens = if (cameraLens == CameraLens.Back) CameraLens.Front else CameraLens.Back 
+                onClick = {
+                    cameraLens = if (cameraLens == CameraLens.Back) CameraLens.Front else CameraLens.Back
                 },
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(Color.DarkGray.copy(alpha = 0.5f), CircleShape)
+                modifier = Modifier.size(48.dp).background(Color.DarkGray.copy(alpha = 0.5f), CircleShape)
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Switch Camera",
-                    tint = Color.White
-                )
+                Icon(imageVector = Icons.Filled.Refresh, contentDescription = "Switch Camera", tint = Color.White)
             }
-            
-            // Capture button - enabled when faces detected
+
             Box(
                 modifier = Modifier
                     .size(72.dp)
-                    .background(
-                        if (appState.state.detections.isNotEmpty()) AccentOrange else Color.Gray,
-                        shape = CircleShape
-                    )
-                    .clickable(enabled = appState.state.detections.isNotEmpty()) {
-                        shouldCapture = true
+                    .background(if (!detectionFrozen) AccentOrange else Color.Gray, shape = CircleShape)
+                    .clickable(enabled = !detectionFrozen) {
+                        detectionFrozen = true
+                        com.org.humanfaceeyedetector.camera.captureImage(
+                            onImageCaptured = { bitmap ->
+                                appState.setDetections(emptyList())
+                                onCapture(bitmap.toImageBitmap())
+                            },
+                            onError = { error ->
+                                appState.setInferenceError("Capture failed: $error")
+                                detectionFrozen = false
+                            }
+                        )
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Lens,
-                    contentDescription = "Capture",
-                    tint = Color.Black,
-                    modifier = Modifier.size(28.dp)
-                )
+                Icon(imageVector = Icons.Filled.Lens, contentDescription = "Capture", tint = Color.Black, modifier = Modifier.size(28.dp))
             }
-            
-            // Placeholder for symmetry
+
             Spacer(modifier = Modifier.size(48.dp))
         }
     }
@@ -537,92 +496,89 @@ fun BoundingBoxOverlay(
     detections: List<com.org.humanfaceeyedetector.state.DetectionResult>,
     selectedFaceIndex: Int?,
     onFaceTapped: (Int) -> Unit,
-    onImageSizeKnown: (Int, Int) -> Unit
+    onImageSizeKnown: (Int, Int) -> Unit,
+    labelPrefix: String = "Face"
 ) {
     BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(20.dp)
+        modifier = Modifier.fillMaxSize()
     ) {
         val density = LocalDensity.current
-        
-        // Get container size in pixels
         val containerWidthPx = with(density) { maxWidth.toPx() }
         val containerHeightPx = with(density) { maxHeight.toPx() }
-        
-        // Calculate image scaling to fit container (ContentScale.Fit)
+
         val imageWidth = image.width.toFloat()
         val imageHeight = image.height.toFloat()
-        
+
         val scale = minOf(containerWidthPx / imageWidth, containerHeightPx / imageHeight)
-        
-        // Calculate centered image offset
-        val offsetX = (containerWidthPx - imageWidth * scale) / 2
-        val offsetY = (containerHeightPx - imageHeight * scale) / 2
-        
-        // Display image
+        val offsetX = (containerWidthPx - imageWidth * scale) / 2f
+        val offsetY = (containerHeightPx - imageHeight * scale) / 2f
+
         Image(
             bitmap = image,
             contentDescription = "Captured image",
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Fit
         )
-        
-        // Draw bounding boxes with Canvas
-        androidx.compose.foundation.Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-        ) {
-            // Draw each detection
+
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
             detections.forEachIndexed { index, detection ->
                 val isSelected = selectedFaceIndex == index
-                
-                // Calculate box position and size
-                // Coordinate transformation: model/image space -> screen space
-                val left = detection.x1 * scale + offsetX
-                val top = detection.y1 * scale + offsetY
-                val right = detection.x2 * scale + offsetX
+                val left   = detection.x1 * scale + offsetX
+                val top    = detection.y1 * scale + offsetY
+                val right  = detection.x2 * scale + offsetX
                 val bottom = detection.y2 * scale + offsetY
-                
-                val width = right - left
+                val width  = right - left
                 val height = bottom - top
-                
-                // Draw selection highlight if selected
+
                 if (isSelected) {
                     drawRect(
-                        color = AccentOrange.copy(alpha = 0.1f),
+                        color = AccentOrange.copy(alpha = 0.15f),
                         topLeft = androidx.compose.ui.geometry.Offset(left, top),
                         size = androidx.compose.ui.geometry.Size(width, height)
                     )
                 }
-                
-                // Draw bounding box
                 drawRect(
-                    color = AccentOrange,
+                    color = if (isSelected) AccentOrange else androidx.compose.ui.graphics.Color.White,
                     topLeft = androidx.compose.ui.geometry.Offset(left, top),
                     size = androidx.compose.ui.geometry.Size(width, height),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f)
-                )
-                
-                // Draw label background
-                val percent = (detection.confidence * 100).toInt()
-                val labelText = "Face ${index + 1}\n$percent%"
-                // Note: labelText unused in drawing but useful for debug/accessibility if added
-                drawRect(
-                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.7f),
-                    topLeft = androidx.compose.ui.geometry.Offset(left, top - 30f),
-                    size = androidx.compose.ui.geometry.Size(width, 30f)
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
                 )
             }
         }
-        
-        // Clickable areas for each detection
+
+        // Face labels
         detections.forEachIndexed { index, detection ->
-            val leftPx = detection.x1 * scale + offsetX
-            val topPx = detection.y1 * scale + offsetY
-            val widthPx = (detection.x2 - detection.x1) * scale
+            val leftPx  = detection.x1 * scale + offsetX
+            val topPx   = detection.y1 * scale + offsetY
+
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = with(density) { leftPx.toDp() },
+                        y = with(density) { (topPx - 28f).toDp() }
+                    )
+            ) {
+                Text(
+                    text = "$labelPrefix ${index + 1}",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .background(
+                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.6f),
+                            RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        detections.forEachIndexed { index, detection ->
+            val leftPx   = detection.x1 * scale + offsetX
+            val topPx    = detection.y1 * scale + offsetY
+            val widthPx  = (detection.x2 - detection.x1) * scale
             val heightPx = (detection.y2 - detection.y1) * scale
-            
+
             Box(
                 modifier = Modifier
                     .offset(
@@ -630,7 +586,7 @@ fun BoundingBoxOverlay(
                         y = with(density) { topPx.toDp() }
                     )
                     .size(
-                        width = with(density) { widthPx.toDp() },
+                        width  = with(density) { widthPx.toDp() },
                         height = with(density) { heightPx.toDp() }
                     )
                     .clickable { onFaceTapped(index) }
@@ -732,10 +688,10 @@ fun EyeDetectionScreen(
                     
                     val offsetEyeDetections = eyeDetections.map { eye ->
                         eye.copy(
-                            x1 = eye.x1 - faceX,
-                            y1 = eye.y1 - faceY,
-                            x2 = eye.x2 - faceX,
-                            y2 = eye.y2 - faceY
+                            x1 = maxOf(0f, eye.x1 - faceX),
+                            y1 = maxOf(0f, eye.y1 - faceY),
+                            x2 = maxOf(0f, eye.x2 - faceX),
+                            y2 = maxOf(0f, eye.y2 - faceY)
                         )
                     }
 
@@ -747,7 +703,8 @@ fun EyeDetectionScreen(
                             val eyeType = if (eyeIndex == 0) EyeType.Left else EyeType.Right
                             localSelectedEye = eyeType
                         },
-                        onImageSizeKnown = { _, _ -> }
+                        onImageSizeKnown = { _, _ -> },
+                        labelPrefix = "Eye"
                     )
                 } else if (isProcessing) {
                      Column(

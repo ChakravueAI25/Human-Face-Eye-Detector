@@ -23,66 +23,45 @@ object EyeDetectionManager {
      * Using existing landmarks, no new inference.
      */
     suspend fun detectEyes(
-        fullImage: ImageBitmap, // Kept for signature compatibility, unused
+        fullImage: ImageBitmap,
         selectedFaceId: Int,
         appState: AppStateHolder
     ) {
         try {
             appState.setProcessing(true)
-            
-            // Find the selected face by ID
-            val selectedFace = appState.state.detections.find { it.faceId == selectedFaceId }
-            
+
+            val selectedFace = appState.state.detections.getOrNull(selectedFaceId)
             if (selectedFace == null) {
-                Log.e(TAG, "Selected face not found (ID: $selectedFaceId)")
                 appState.setInferenceError("Face not found")
                 appState.setProcessing(false)
                 return
             }
-            
-            Log.d(TAG, "Extracting eyes for face $selectedFaceId")
-            
-            val faceWidth = abs(selectedFace.x2 - selectedFace.x1)
-            
-            // Box size: 15% of face width (as per requirements)
-            // Using as radius (half-width) for the rect construction
-            val eyeBoxRadius = faceWidth * 0.15f
-            
-            // Get landmarks or fallback
-            // Note: coordinates are already mapped to image space in DetectionResult
-            
-            val leftEyeCenter = getLandmarkOrFallback(
-                selectedFace.leftEyeX, selectedFace.leftEyeY,
-                selectedFace, isLeftEye = true
+
+            val faceWidth  = abs(selectedFace.x2 - selectedFace.x1)
+            val faceHeight = abs(selectedFace.y2 - selectedFace.y1)
+            val eyeBoxHalfW = faceWidth  * 0.20f
+            val eyeBoxHalfH = faceHeight * 0.12f
+
+            val leftCenter = getLandmarkOrFallback(
+                selectedFace.leftEyeX, selectedFace.leftEyeY, selectedFace, isLeftEye = true
             )
-            
-            val rightEyeCenter = getLandmarkOrFallback(
-                selectedFace.rightEyeX, selectedFace.rightEyeY,
-                selectedFace, isLeftEye = false
+            val rightCenter = getLandmarkOrFallback(
+                selectedFace.rightEyeX, selectedFace.rightEyeY, selectedFace, isLeftEye = false
             )
-            
-            // Create bounding boxes
-            val leftEyeBox = createEyeDetection(
-                center = leftEyeCenter,
-                radius = eyeBoxRadius,
-                id = 0 // Left Eye ID
+
+            fun makeBox(center: Pair<Float,Float>, id: Int) = DetectionResult(
+                faceId     = id,
+                confidence = 1.0f,
+                x1 = center.first  - eyeBoxHalfW,
+                y1 = center.second - eyeBoxHalfH,
+                x2 = center.first  + eyeBoxHalfW,
+                y2 = center.second + eyeBoxHalfH
             )
-            
-            val rightEyeBox = createEyeDetection(
-                center = rightEyeCenter,
-                radius = eyeBoxRadius,
-                id = 1 // Right Eye ID
-            )
-            
-            val eyeDetections = listOf(leftEyeBox, rightEyeBox)
-            
-            // Update state
-            appState.setEyeDetections(eyeDetections)
+
+            appState.setEyeDetections(listOf(makeBox(leftCenter, 0), makeBox(rightCenter, 1)))
             appState.setProcessing(false)
-            Log.d(TAG, "Eye regions extracted: ${eyeDetections.size}")
-            
+
         } catch (e: Exception) {
-            Log.e(TAG, "Error extracting eyes", e)
             appState.setInferenceError("Eye extraction failed: ${e.message}")
             appState.setProcessing(false)
         }

@@ -5,22 +5,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 
-/**
- * Android implementation of camera capture
- * Uses the global captureImage function from CameraPreview
- * Step-5: Includes ImageCapture with rotation handling
- */
 @Composable
+@Suppress("UNUSED")
 actual fun RequestCaptureImage(
     onImageCaptured: (ImageBitmap) -> Unit,
     onError: (String) -> Unit
 ) {
-    captureImage(
+    // Intentionally empty - capture is triggered imperatively via captureImage()
+}
+
+actual fun captureImage(
+    onImageCaptured: (Any) -> Unit,
+    onError: (String) -> Unit
+) {
+    // Delegate to CameraPreview implementation
+    captureImageImpl(
         onImageCaptured = { bitmap ->
-            val imageBitmap = bitmap.asImageBitmap()
-            onImageCaptured(imageBitmap)
+            @Suppress("UNCHECKED_CAST")
+            onImageCaptured(bitmap as Any)
         },
         onError = onError
     )
+}
+
+actual fun Any.toImageBitmap(): ImageBitmap {
+    return (this as Bitmap).asImageBitmap()
 }
 
